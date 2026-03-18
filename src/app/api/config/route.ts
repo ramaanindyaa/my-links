@@ -4,7 +4,8 @@ import { defaultConfig, sanitizeConfig, type LinkBioConfig } from "@/lib/linkBio
 
 export const runtime = "nodejs";
 
-const CONFIG_FILE = path.join(process.cwd(), "data", "linkBioConfig.json");
+const CONFIG_ROOT = process.env.VERCEL ? "/tmp" : process.cwd();
+const CONFIG_FILE = path.join(CONFIG_ROOT, "data", "linkBioConfig.json");
 
 async function ensureConfigFile() {
   await mkdir(path.dirname(CONFIG_FILE), { recursive: true });
@@ -47,7 +48,15 @@ export async function PUT(request: Request) {
     return Response.json(saved, {
       headers: { "Cache-Control": "no-store" },
     });
-  } catch {
-    return Response.json({ error: "Invalid request body" }, { status: 400 });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return Response.json({ error: "Invalid request body" }, { status: 400 });
+    }
+    return Response.json(
+      {
+        error: "Failed to persist config on server",
+      },
+      { status: 500 },
+    );
   }
 }
