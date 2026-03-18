@@ -44,6 +44,37 @@ async function sha256Hex(input: string) {
     .join("");
 }
 
+async function optimizeAvatarToDataUrl(file: File): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to decode image"));
+      image.src = objectUrl;
+    });
+
+    const maxDimension = 420;
+    const largestSide = Math.max(img.width, img.height) || 1;
+    const scale = Math.min(1, maxDimension / largestSide);
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas context unavailable");
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // Export as JPEG so avatar payload stays small enough for API request limits.
+    return canvas.toDataURL("image/jpeg", 0.8);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export default function AdminPage() {
   const options = useMemo(() => kindOptions(), []);
   const [cfg, setCfg] = useState<LinkBioConfig>(() => defaultConfig());
@@ -119,7 +150,13 @@ export default function AdminPage() {
       const saved = sanitizeConfig((await response.json()) as unknown);
       setCfg(saved);
       setDraft(saved);
-      writeConfigToStorage(window.localStorage, saved);
+
+      let cacheWriteFailed = false;
+      try {
+        writeConfigToStorage(window.localStorage, saved);
+      } catch {
+        cacheWriteFailed = true;
+      }
 
       try {
         if (typeof BroadcastChannel !== "undefined") {
@@ -128,8 +165,8 @@ export default function AdminPage() {
       } catch {
         // ignore
       }
-      setStatus("Saved");
-      window.setTimeout(() => setStatus(""), 1200);
+      setStatus(cacheWriteFailed ? "Saved (local cache full)" : "Saved");
+      window.setTimeout(() => setStatus(""), cacheWriteFailed ? 1800 : 1200);
     } catch {
       setStatus("Failed to save");
       window.setTimeout(() => setStatus(""), 1800);
@@ -221,13 +258,22 @@ export default function AdminPage() {
   const onPickAvatar = async (file: File | null) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) return;
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsDataURL(file);
-    });
-    setDraft((d) => ({ ...d, profile: { ...d.profile, avatarDataUrl: dataUrl } }));
+    if (file.size > 15 * 1024 * 1024) {
+      setStatus("Image too large (max 15MB)");
+      window.setTimeout(() => setStatus(""), 1800);
+      return;
+    }
+
+    setStatus("Processing image...");
+    try {
+      const dataUrl = await optimizeAvatarToDataUrl(file);
+      setDraft((d) => ({ ...d, profile: { ...d.profile, avatarDataUrl: dataUrl } }));
+      setStatus("Image ready to save");
+      window.setTimeout(() => setStatus(""), 1000);
+    } catch {
+      setStatus("Failed to process image");
+      window.setTimeout(() => setStatus(""), 1800);
+    }
   };
 
   const updateLink = (id: string, patch: Partial<LinkItem>) => {
@@ -343,7 +389,7 @@ export default function AdminPage() {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-zinc-400">
-              {dirty ? "Unsaved changes" : status}
+              {status || (dirty ? "Unsaved changes" : "")}
             </span>
             <button
               type="button"
