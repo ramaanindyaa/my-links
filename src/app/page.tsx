@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CLICKS_STORAGE_KEY,
+  CONFIG_STORAGE_KEY,
   SYNC_CHANNEL,
   defaultConfig,
   readConfigFromStorage,
@@ -124,13 +125,13 @@ export default function Home() {
     if (typeof window === "undefined") return;
     const storage = window.localStorage;
     const current = readConfigFromStorage(storage);
-    if (!storage.getItem("linkBioConfig:v1")) {
-      storage.setItem("linkBioConfig:v1", JSON.stringify(defaultConfig()));
+    if (!storage.getItem(CONFIG_STORAGE_KEY)) {
+      storage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(defaultConfig()));
     }
     setCfg(current);
 
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== "linkBioConfig:v1") return;
+      if (e.key !== CONFIG_STORAGE_KEY) return;
       syncConfig();
     };
     window.addEventListener("storage", onStorage);
@@ -143,9 +144,19 @@ export default function Home() {
         syncConfig();
       };
     }
+
+    const onFocus = () => syncConfig();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") syncConfig();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       window.removeEventListener("storage", onStorage);
       bc?.close();
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [syncConfig]);
 
