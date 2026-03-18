@@ -47,6 +47,9 @@ export default function AdminPage() {
   const [cfg, setCfg] = useState<LinkBioConfig>(() =>
     readConfigFromStorage(typeof window === "undefined" ? undefined : window.localStorage),
   );
+  const [draft, setDraft] = useState<LinkBioConfig>(() =>
+    readConfigFromStorage(typeof window === "undefined" ? undefined : window.localStorage),
+  );
   const [status, setStatus] = useState<string>("");
   const [authed, setAuthed] = useState(false);
   const [email, setEmail] = useState(ADMIN_EMAIL);
@@ -66,6 +69,7 @@ export default function AdminPage() {
       writeConfigToStorage(storage, defaultConfig());
     }
     setCfg(current);
+    setDraft(current);
 
     const bc =
       typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(SYNC_CHANNEL) : null;
@@ -85,6 +89,7 @@ export default function AdminPage() {
 
   const save = (next: LinkBioConfig) => {
     setCfg(next);
+    setDraft(next);
     if (typeof window === "undefined") return;
     writeConfigToStorage(window.localStorage, next);
     try {
@@ -97,6 +102,19 @@ export default function AdminPage() {
     setStatus("Saved");
     window.setTimeout(() => setStatus(""), 1200);
   };
+
+  const saveDraft = () => {
+    save(draft);
+  };
+
+  const discardDraft = () => {
+    setDraft(cfg);
+    setStatus("Discarded");
+    window.setTimeout(() => setStatus(""), 900);
+  };
+
+  const dirty =
+    JSON.stringify(draft) !== JSON.stringify(cfg);
 
   const login = async () => {
     setAuthError("");
@@ -171,40 +189,44 @@ export default function AdminPage() {
       reader.onerror = () => reject(new Error("Failed to read file"));
       reader.readAsDataURL(file);
     });
-    save({ ...cfg, profile: { ...cfg.profile, avatarDataUrl: dataUrl } });
+    setDraft((d) => ({ ...d, profile: { ...d.profile, avatarDataUrl: dataUrl } }));
   };
 
   const updateLink = (id: string, patch: Partial<LinkItem>) => {
-    const nextLinks = cfg.links.map((l) => (l.id === id ? { ...l, ...patch } : l));
-    save({ ...cfg, links: nextLinks });
+    setDraft((d) => ({
+      ...d,
+      links: d.links.map((l) => (l.id === id ? { ...l, ...patch } : l)),
+    }));
   };
 
   const removeLink = (id: string) => {
-    const nextLinks = cfg.links.filter((l) => l.id !== id);
-    save({ ...cfg, links: nextLinks.length ? nextLinks : defaultConfig().links });
+    setDraft((d) => {
+      const nextLinks = d.links.filter((l) => l.id !== id);
+      return { ...d, links: nextLinks.length ? nextLinks : defaultConfig().links };
+    });
   };
 
   const moveLink = (id: string, dir: -1 | 1) => {
-    const i = cfg.links.findIndex((l) => l.id === id);
+    const i = draft.links.findIndex((l) => l.id === id);
     if (i < 0) return;
     const j = i + dir;
-    if (j < 0 || j >= cfg.links.length) return;
-    const next = [...cfg.links];
+    if (j < 0 || j >= draft.links.length) return;
+    const next = [...draft.links];
     const tmp = next[i];
     next[i] = next[j];
     next[j] = tmp;
-    save({ ...cfg, links: next });
+    setDraft((d) => ({ ...d, links: next }));
   };
 
   const addLink = () => {
-    const id = sanitizeId(`link-${cfg.links.length + 1}`);
-    save({
-      ...cfg,
+    const id = sanitizeId(`link-${draft.links.length + 1}`);
+    setDraft((d) => ({
+      ...d,
       links: [
-        ...cfg.links,
+        ...d.links,
         { id, title: "New link", url: "https://", subtitle: "", kind: "link" },
       ],
-    });
+    }));
   };
 
   return (
@@ -282,7 +304,25 @@ export default function AdminPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-zinc-400">{status}</span>
+            <span className="text-sm text-zinc-400">
+              {dirty ? "Unsaved changes" : status}
+            </span>
+            <button
+              type="button"
+              onClick={discardDraft}
+              disabled={!dirty}
+              className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.05] disabled:opacity-50"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              onClick={saveDraft}
+              disabled={!dirty}
+              className="rounded-xl bg-[#E50914] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-50"
+            >
+              Save changes
+            </button>
             <button
               type="button"
               onClick={logout}
@@ -292,7 +332,7 @@ export default function AdminPage() {
             </button>
             <button
               type="button"
-              onClick={() => save(defaultConfig())}
+              onClick={() => setDraft(defaultConfig())}
               className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.05]"
             >
               Reset defaults
@@ -305,10 +345,10 @@ export default function AdminPage() {
             <h2 className="text-sm font-semibold text-zinc-200">Profile picture</h2>
             <div className="mt-4 flex items-center gap-4">
               <div className="h-16 w-16 overflow-hidden rounded-full bg-white/[0.03] ring-1 ring-white/10">
-                {cfg.profile.avatarDataUrl ? (
+                {draft.profile.avatarDataUrl ? (
                   <img
-                    src={cfg.profile.avatarDataUrl}
-                    alt={cfg.profile.name}
+                    src={draft.profile.avatarDataUrl}
+                    alt={draft.profile.name}
                     className="h-full w-full object-cover"
                   />
                 ) : (
@@ -326,7 +366,10 @@ export default function AdminPage() {
                   <button
                     type="button"
                     onClick={() =>
-                      save({ ...cfg, profile: { ...cfg.profile, avatarDataUrl: null } })
+                      setDraft((d) => ({
+                        ...d,
+                        profile: { ...d.profile, avatarDataUrl: null },
+                      }))
                     }
                     className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.05]"
                   >
@@ -343,9 +386,12 @@ export default function AdminPage() {
               <label className="block">
                 <div className="text-xs font-medium text-zinc-400">Name</div>
                 <input
-                  value={cfg.profile.name}
+                  value={draft.profile.name}
                   onChange={(e) =>
-                    save({ ...cfg, profile: { ...cfg.profile, name: e.target.value } })
+                    setDraft((d) => ({
+                      ...d,
+                      profile: { ...d.profile, name: e.target.value },
+                    }))
                   }
                   className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none ring-[#E50914]/60 focus:ring-2"
                 />
@@ -353,9 +399,12 @@ export default function AdminPage() {
               <label className="block">
                 <div className="text-xs font-medium text-zinc-400">Bio</div>
                 <textarea
-                  value={cfg.profile.bio}
+                  value={draft.profile.bio}
                   onChange={(e) =>
-                    save({ ...cfg, profile: { ...cfg.profile, bio: e.target.value } })
+                    setDraft((d) => ({
+                      ...d,
+                      profile: { ...d.profile, bio: e.target.value },
+                    }))
                   }
                   rows={3}
                   className="mt-1 w-full resize-none rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none ring-[#E50914]/60 focus:ring-2"
@@ -430,7 +479,7 @@ export default function AdminPage() {
           </div>
 
           <div className="mt-4 space-y-3">
-            {cfg.links.map((link) => (
+            {draft.links.map((link) => (
               <div
                 key={link.id}
                 className="rounded-2xl border border-white/10 bg-black/20 p-4"
