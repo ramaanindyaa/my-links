@@ -102,6 +102,49 @@ function sanitizeId(id: string) {
   return cleaned || `link-${Math.random().toString(16).slice(2)}`;
 }
 
+export function sanitizeConfig(input: unknown, fallback: LinkBioConfig = defaultConfig()): LinkBioConfig {
+  if (!isRecord(input)) return fallback;
+
+  const profileRaw = input.profile;
+  const profile: Profile = {
+    name: fallback.profile.name,
+    bio: fallback.profile.bio,
+    avatarDataUrl: null,
+  };
+  if (isRecord(profileRaw)) {
+    profile.name = asString(profileRaw.name, fallback.profile.name);
+    profile.bio = asString(profileRaw.bio, fallback.profile.bio);
+    profile.avatarDataUrl = asNullableString(profileRaw.avatarDataUrl);
+  }
+
+  const linksRaw = input.links;
+  const links: LinkItem[] = [];
+  if (Array.isArray(linksRaw)) {
+    for (const item of linksRaw) {
+      if (!isRecord(item)) continue;
+      const id = sanitizeId(asString(item.id, ""));
+      links.push({
+        id,
+        title: asString(item.title, id),
+        url: asString(item.url, ""),
+        subtitle: asString(item.subtitle, ""),
+        kind: asKind(item.kind),
+      });
+    }
+  }
+
+  const deduped: LinkItem[] = [];
+  const seen = new Set<string>();
+  for (const link of links.length ? links : fallback.links) {
+    const id = sanitizeId(link.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    deduped.push({ ...link, id });
+  }
+
+  return { profile, links: deduped };
+}
+
 export function readConfigFromStorage(storage: Storage | undefined): LinkBioConfig {
   const fallback = defaultConfig();
   if (!storage) return fallback;
@@ -109,46 +152,7 @@ export function readConfigFromStorage(storage: Storage | undefined): LinkBioConf
     const raw = storage.getItem(CONFIG_STORAGE_KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed)) return fallback;
-
-    const profileRaw = parsed.profile;
-    const profile: Profile = {
-      name: fallback.profile.name,
-      bio: fallback.profile.bio,
-      avatarDataUrl: null,
-    };
-    if (isRecord(profileRaw)) {
-      profile.name = asString(profileRaw.name, fallback.profile.name);
-      profile.bio = asString(profileRaw.bio, fallback.profile.bio);
-      profile.avatarDataUrl = asNullableString(profileRaw.avatarDataUrl);
-    }
-
-    const linksRaw = parsed.links;
-    const links: LinkItem[] = [];
-    if (Array.isArray(linksRaw)) {
-      for (const item of linksRaw) {
-        if (!isRecord(item)) continue;
-        const id = sanitizeId(asString(item.id, ""));
-        links.push({
-          id,
-          title: asString(item.title, id),
-          url: asString(item.url, ""),
-          subtitle: asString(item.subtitle, ""),
-          kind: asKind(item.kind),
-        });
-      }
-    }
-
-    const deduped: LinkItem[] = [];
-    const seen = new Set<string>();
-    for (const link of links.length ? links : fallback.links) {
-      const id = sanitizeId(link.id);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      deduped.push({ ...link, id });
-    }
-
-    return { profile, links: deduped };
+    return sanitizeConfig(parsed, fallback);
   } catch {
     return fallback;
   }

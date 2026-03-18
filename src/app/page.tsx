@@ -1,19 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   CLICKS_STORAGE_KEY,
   CONFIG_STORAGE_KEY,
   SYNC_CHANNEL,
   defaultConfig,
   readConfigFromStorage,
+  sanitizeConfig,
+  writeConfigToStorage,
   type LinkBioConfig,
 } from "../lib/linkBioConfig";
 
 export default function Home() {
-  const [cfg, setCfg] = useState<LinkBioConfig>(() =>
-    readConfigFromStorage(typeof window === "undefined" ? undefined : window.localStorage),
-  );
+  const [cfg, setCfg] = useState<LinkBioConfig>(() => defaultConfig());
 
   const links = cfg.links;
 
@@ -112,27 +112,31 @@ export default function Home() {
     }
   };
 
-  const syncConfig = useCallback(() => {
-    setCfg(
-      readConfigFromStorage(
-        typeof window === "undefined" ? undefined : window.localStorage,
-      ),
-    );
+  const syncConfig = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const storage = window.localStorage;
+    try {
+      const response = await fetch("/api/config", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load config");
+      const serverConfig = sanitizeConfig((await response.json()) as unknown);
+      setCfg(serverConfig);
+      writeConfigToStorage(storage, serverConfig);
+    } catch {
+      setCfg(readConfigFromStorage(storage));
+    }
   }, []);
 
   useEffect(() => {
-    // Ensure defaults exist at least once
     if (typeof window === "undefined") return;
     const storage = window.localStorage;
-    const current = readConfigFromStorage(storage);
     if (!storage.getItem(CONFIG_STORAGE_KEY)) {
-      storage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(defaultConfig()));
+      writeConfigToStorage(storage, defaultConfig());
     }
-    setCfg(current);
+    void syncConfig();
 
     const onStorage = (e: StorageEvent) => {
       if (e.key !== CONFIG_STORAGE_KEY) return;
-      syncConfig();
+      void syncConfig();
     };
     window.addEventListener("storage", onStorage);
 
@@ -141,13 +145,15 @@ export default function Home() {
     if (bc) {
       bc.onmessage = (event) => {
         if (event?.data?.type !== "sync") return;
-        syncConfig();
+        void syncConfig();
       };
     }
 
-    const onFocus = () => syncConfig();
+    const onFocus = () => {
+      void syncConfig();
+    };
     const onVisibility = () => {
-      if (document.visibilityState === "visible") syncConfig();
+      if (document.visibilityState === "visible") void syncConfig();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);

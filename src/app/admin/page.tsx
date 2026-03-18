@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   SYNC_CHANNEL,
+  sanitizeConfig,
   defaultConfig,
   readConfigFromStorage,
   writeConfigToStorage,
@@ -44,12 +46,8 @@ async function sha256Hex(input: string) {
 
 export default function AdminPage() {
   const options = useMemo(() => kindOptions(), []);
-  const [cfg, setCfg] = useState<LinkBioConfig>(() =>
-    readConfigFromStorage(typeof window === "undefined" ? undefined : window.localStorage),
-  );
-  const [draft, setDraft] = useState<LinkBioConfig>(() =>
-    readConfigFromStorage(typeof window === "undefined" ? undefined : window.localStorage),
-  );
+  const [cfg, setCfg] = useState<LinkBioConfig>(() => defaultConfig());
+  const [draft, setDraft] = useState<LinkBioConfig>(() => defaultConfig());
   const [status, setStatus] = useState<string>("");
   const [authed, setAuthed] = useState(false);
   const [email, setEmail] = useState(ADMIN_EMAIL);
@@ -64,16 +62,35 @@ export default function AdminPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storage = window.localStorage;
-    const current = readConfigFromStorage(storage);
-    if (!storage.getItem("linkBioConfig:v1")) {
-      writeConfigToStorage(storage, defaultConfig());
-    }
-    setCfg(current);
-    setDraft(current);
+    const fallback = readConfigFromStorage(storage);
+
+    let mounted = true;
+    const load = async () => {
+      try {
+        const response = await fetch("/api/config", { cache: "no-store" });
+        if (!response.ok) throw new Error("Failed to load config");
+        const serverConfig = sanitizeConfig((await response.json()) as unknown);
+        if (!mounted) return;
+        setCfg(serverConfig);
+        setDraft(serverConfig);
+        writeConfigToStorage(storage, serverConfig);
+      } catch {
+        if (!mounted) return;
+        if (!storage.getItem("linkBioConfig:v1")) {
+          writeConfigToStorage(storage, defaultConfig());
+        }
+        setCfg(fallback);
+        setDraft(fallback);
+      }
+    };
+    void load();
 
     const bc =
       typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(SYNC_CHANNEL) : null;
-    return () => bc?.close();
+    return () => {
+      mounted = false;
+      bc?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -87,24 +104,40 @@ export default function AdminPage() {
     setAuthed(Boolean(sessionHash && sessionHash === expectedHash));
   }, []);
 
-  const save = (next: LinkBioConfig) => {
-    setCfg(next);
-    setDraft(next);
+  const save = async (next: LinkBioConfig) => {
     if (typeof window === "undefined") return;
-    writeConfigToStorage(window.localStorage, next);
+    setStatus("Saving...");
     try {
-      if (typeof BroadcastChannel !== "undefined") {
-        new BroadcastChannel(SYNC_CHANNEL).postMessage({ type: "sync" });
+      const response = await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Save failed");
+
+      const saved = sanitizeConfig((await response.json()) as unknown);
+      setCfg(saved);
+      setDraft(saved);
+      writeConfigToStorage(window.localStorage, saved);
+
+      try {
+        if (typeof BroadcastChannel !== "undefined") {
+          new BroadcastChannel(SYNC_CHANNEL).postMessage({ type: "sync" });
+        }
+      } catch {
+        // ignore
       }
+      setStatus("Saved");
+      window.setTimeout(() => setStatus(""), 1200);
     } catch {
-      // ignore
+      setStatus("Failed to save");
+      window.setTimeout(() => setStatus(""), 1800);
     }
-    setStatus("Saved");
-    window.setTimeout(() => setStatus(""), 1200);
   };
 
   const saveDraft = () => {
-    save(draft);
+    void save(draft);
   };
 
   const discardDraft = () => {
@@ -296,10 +329,10 @@ export default function AdminPage() {
               Admin dashboard
             </h1>
             <p className="mt-1 text-sm text-zinc-400">
-              Edits are saved locally (this browser only). Open{" "}
-              <a className="text-zinc-200 underline underline-offset-4" href="/">
+              Edits are saved to server and synced to this browser cache. Open{" "}
+              <Link className="text-zinc-200 underline underline-offset-4" href="/">
                 /
-              </a>{" "}
+              </Link>{" "}
               to preview.
             </p>
           </div>
